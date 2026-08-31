@@ -17,6 +17,14 @@ func handleConnection(conn net.Conn) {
 			fmt.Println("Error reading data:", err)
 			break
 		}
+		value, consumed, err := parse(buffer[:n])
+		if err != nil {
+			fmt.Println("Error parsing data:", err)
+			break
+		}
+		fmt.Println("Parsed Value:", value)
+		fmt.Println("Bytes consumed:", consumed)
+
 		message := string(buffer[:n])
 		fmt.Println("Received message:", message)
 
