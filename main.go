@@ -12,24 +12,27 @@ func handleConnection(conn net.Conn) {
 	}()
 	buffer := make([]byte, 1024)
 	data := make([]byte, 0)
-	for {
+	for { //outer loop for reading from the connection
 		n, err := conn.Read(buffer)
 		if err != nil {
 			fmt.Println("Error reading data:", err)
 			break
 		}
 		data = append(data, buffer[:n]...)
-		value, consumed, err := parse(data)
-		if err == errIncomplete {
-			continue // Wait for more data to arrive
+
+		for len(data) > 0 { //inner loop for parsing the data
+			value, consumed, err := parse(data)
+			if err == errIncomplete {
+				break // Wait for more data to arrive by actually ending the inner loop and continuing to read from the connection.
+			}
+			if err != nil {
+				fmt.Println("Error parsing data:", err)
+				break
+			}
+			data = data[consumed:] // Remove the consumed bytes from the data slice
+			fmt.Println("Parsed Value:", value)
+			fmt.Println("Bytes consumed:", consumed)
 		}
-		if err != nil {
-			fmt.Println("Error parsing data:", err)
-			break
-		}
-		data = data[consumed:] // Remove the consumed bytes from the data slice
-		fmt.Println("Parsed Value:", value)
-		fmt.Println("Bytes consumed:", consumed)
 
 		message := string(buffer[:n])
 		fmt.Println("Received message:", message)
