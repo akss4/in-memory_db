@@ -6,6 +6,8 @@ import (
 	"strconv"
 )
 
+var errIncomplete = errors.New("Incomplete Data")
+
 type Value struct {
 	typ   byte
 	str   string
@@ -18,18 +20,19 @@ func parse(data []byte) (Value, int, error) {
 		return Value{}, 0, errors.New("No Data")
 	}
 	switch data[0] {
-	case '+':
+	case '+': //Simple string
 		end := bytes.Index(data, []byte("\r\n"))
 		if end == -1 {
-			return Value{}, 0, errors.New("Incomplete Data")
+			return Value{}, 0, errIncomplete
 		}
 		return Value{typ: '+',
 			str: string(data[1:end])}, end + 2, nil
 
 	case ':':
+		// Integer
 		end := bytes.Index(data, []byte("\r\n"))
 		if end == -1 {
-			return Value{}, 0, errors.New("Incomplete Data")
+			return Value{}, 0, errIncomplete
 		}
 		num, err := strconv.Atoi(string(data[1:end]))
 		if err != nil {
@@ -38,19 +41,21 @@ func parse(data []byte) (Value, int, error) {
 		return Value{typ: ':',
 			num: num}, end + 2, nil
 
-	case '-':
+	case '-': // error value
 		end := bytes.Index(data, []byte("\r\n"))
 		if end == -1 {
-			return Value{}, 0, errors.New("Incomplete Data")
+			return Value{}, 0, errIncomplete
 		}
 		return Value{typ: '-',
 			str: string(data[1:end])}, end + 2, nil
 
-	case '$':
+	case '$': //// Bulk String: $5\r\nhello\r\n
+		// First read the length, then read exactly that many bytes as the string.
+		// Also verify that the string is followed by \r\n.
 		end := bytes.Index(data, []byte("\r\n"))
 		if end == -1 {
 			return Value{}, 0,
-				errors.New("Incomplete Data")
+				errIncomplete
 		}
 		length, err := strconv.Atoi(string(data[1:end]))
 		if err != nil {
@@ -61,11 +66,11 @@ func parse(data []byte) (Value, int, error) {
 		dataEnd := start + length
 		if dataEnd > len(data) {
 			return Value{}, 0,
-				errors.New("Incomplete Data")
+				errIncomplete
 		}
 		if dataEnd+2 > len(data) {
 			return Value{}, 0,
-				errors.New("Incomplete Data")
+				errIncomplete
 		}
 		if data[dataEnd] != '\r' ||
 			data[dataEnd+1] != '\n' {
@@ -76,9 +81,12 @@ func parse(data []byte) (Value, int, error) {
 			str: string(data[start:dataEnd])}, dataEnd + 2, nil
 
 	case '*':
+		// Array: *2\r\n:10\r\n:20\r\n
+		// First read the number of elements, then recursively parse each element.
+		// Store all parsed Values inside []Value.
 		end := bytes.Index(data, []byte("\r\n"))
 		if end == -1 {
-			return Value{}, 0, errors.New("Incomplete Data")
+			return Value{}, 0, errIncomplete
 		}
 		length, err := strconv.Atoi(string(data[1:end]))
 		if err != nil {

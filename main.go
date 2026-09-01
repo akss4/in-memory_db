@@ -11,17 +11,23 @@ func handleConnection(conn net.Conn) {
 		conn.Close()
 	}()
 	buffer := make([]byte, 1024)
+	data := make([]byte, 0)
 	for {
 		n, err := conn.Read(buffer)
 		if err != nil {
 			fmt.Println("Error reading data:", err)
 			break
 		}
-		value, consumed, err := parse(buffer[:n])
+		data = append(data, buffer[:n]...)
+		value, consumed, err := parse(data)
+		if err == errIncomplete {
+			continue // Wait for more data to arrive
+		}
 		if err != nil {
 			fmt.Println("Error parsing data:", err)
 			break
 		}
+		data = data[consumed:] // Remove the consumed bytes from the data slice
 		fmt.Println("Parsed Value:", value)
 		fmt.Println("Bytes consumed:", consumed)
 
