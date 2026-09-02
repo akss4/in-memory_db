@@ -1,9 +1,15 @@
 package main
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 var store = make(map[string]string)
-var storeMu = sync.RWMutex{}
+var storeMu = sync.RWMutex{} // for basic string commands
+
+var hash = make(map[string]map[string]string)
+var hashMu = sync.RWMutex{} // for hash commands
 
 func handleCommand(value Value) Value {
 	if value.typ != '*' {
@@ -16,6 +22,7 @@ func handleCommand(value Value) Value {
 		return Value{}
 	}
 	command := value.array[0].str
+	command = strings.ToUpper(command)
 
 	if command == "PING" {
 		if len(value.array) > 1 {
@@ -59,6 +66,54 @@ func handleCommand(value Value) Value {
 		storeMu.RLock()
 		val, ok := store[key]
 		storeMu.RUnlock()
+		if !ok {
+			return Value{
+				typ: '$',
+				str: "",
+			}
+		}
+		return Value{
+			typ: '$',
+			str: val, // get returns the value of the key if it exists, otherwise it returns an empty string
+		}
+	}
+
+	if command == "HSET" {
+		if len(value.array) != 4 {
+			return Value{
+				typ: '-',
+				str: "ERR wrong number of argument for 'HSET' command",
+			}
+		}
+		key := value.array[1].str   // outer map like the index of the hash it has a map in itself too it is a string mapped to a map of string to string  and field andd val are the key and value of the stuff inside the map
+		field := value.array[2].str // inner map field
+		val := value.array[3].str   // inner map value
+		hashMu.Lock()
+		if hash[key] == nil {
+			hash[key] = make(map[string]string)
+		}
+		hash[key][field] = val
+		hashMu.Unlock()
+
+		return Value{
+			typ: '+',
+			str: "OK", // hset acceptance of values
+		}
+
+	}
+
+	if command == "HGET" {
+		if len(value.array) != 3 {
+			return Value{
+				typ: '-',
+				str: "ERR wrong number of argument for 'HGET' command",
+			}
+		}
+		key := value.array[1].str
+		field := value.array[2].str
+		hashMu.RLock()
+		val, ok := hash[key][field]
+		hashMu.RUnlock()
 		if !ok {
 			return Value{
 				typ: '$',
