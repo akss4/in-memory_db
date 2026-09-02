@@ -29,18 +29,19 @@ func handleConnection(conn net.Conn) {
 				fmt.Println("Error parsing data:", err)
 				break
 			}
+
 			data = data[consumed:] // Remove the consumed bytes from the data slice
 			fmt.Println("Parsed Value:", value)
 			fmt.Println("Bytes consumed:", consumed)
-		}
+			response := handleCommand(value)
+			encodedResponse := encode(response)
 
-		message := string(buffer[:n])
-		fmt.Println("Received message:", message)
+			_, err = conn.Write(encodedResponse)
 
-		_, err = conn.Write([]byte("Message received: " + message))
-		if err != nil {
-			fmt.Println("Error writing data:", err)
-			break
+			if err != nil {
+				fmt.Println("Error writing data:", err)
+				break
+			}
 		}
 	}
 
