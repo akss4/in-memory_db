@@ -1,5 +1,10 @@
 package main
 
+import "sync"
+
+var store = make(map[string]string)
+var storeMu = sync.RWMutex{}
+
 func handleCommand(value Value) Value {
 	if value.typ != '*' {
 		return Value{}
@@ -13,12 +18,58 @@ func handleCommand(value Value) Value {
 	command := value.array[0].str
 
 	if command == "PING" {
+		if len(value.array) > 1 {
+			return Value{
+				typ: '+',
+				str: value.array[1].str,
+			}
+		}
 		return Value{
 			typ: '+',
 			str: "PONG",
 		}
-
 	}
-	return Value{}
+	if command == "SET" {
+		if len(value.array) != 3 {
+			return Value{
+				typ: '-',
+				str: "ERR wrong number of argument for 'SET' command",
+			}
+		}
+		key := value.array[1].str
+		val := value.array[2].str
+		storeMu.Lock()
+		store[key] = val
+		storeMu.Unlock()
+		return Value{
+			typ: '+',
+			str: "OK",
+		}
+	}
 
+	if command == "GET" {
+		if len(value.array) != 2 {
+			return Value{
+				typ: '-',
+				str: "ERR wrong number of argument for 'GET' command",
+			}
+
+		}
+		key := value.array[1].str
+		storeMu.RLock()
+		val, ok := store[key]
+		storeMu.RUnlock()
+		if !ok {
+			return Value{
+				typ: '$',
+				str: "",
+			}
+		}
+		return Value{
+			typ: '$',
+			str: val,
+		}
+	}
+
+	return Value{}
 }
