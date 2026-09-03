@@ -3,9 +3,10 @@ package main
 import (
 	"fmt"
 	"net"
+	"strings"
 )
 
-func handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, aof *Aof) {
 	defer func() {
 		fmt.Println("Closing connection...", conn.RemoteAddr())
 		conn.Close()
@@ -33,6 +34,23 @@ func handleConnection(conn net.Conn) {
 			data = data[consumed:] // Remove the consumed bytes from the data slice
 			fmt.Println("Parsed Value:", value)
 			fmt.Println("Bytes consumed:", consumed)
+
+			command := strings.ToUpper(value.array[0].str) // Get the command name from the parsed value
+			if command == "SET" || command == "HSET" || command == "HDEL" {
+				err := aof.Write(value)
+				if err != nil {
+					fmt.Println("Error writing to AOF:", err)
+					break
+				}
+			}
+
+			if command == "FLUSHDB" { // deleting the AOF file when FLUSHDB command is called
+				err := aof.Clear()
+				if err != nil {
+					fmt.Println("Error clearing AOF:", err)
+					break
+				}
+			}
 			response := handleCommand(value)
 			encodedResponse := encode(response)
 
@@ -53,11 +71,23 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	aof, err := NewAof() // create a new AOF instance after listening on the port, so that we can log the commands to the AOF file
+	if err != nil {
+		fmt.Println("Error creating AOF:", err)
+		panic(err)
+	}
+	err = aof.Read(func(value Value) { // read the AOF file and replay the commands to restore the state of the database
+		handleCommand(value)
+	})
+	if err != nil {
+		fmt.Println("Error reading AOF:", err)
+		panic(err)
+	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			panic(err)
 		}
-		go handleConnection(conn)
+		go handleConnection(conn, aof) // Handle each connection concurrently
 	}
 }

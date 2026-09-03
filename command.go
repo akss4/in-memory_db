@@ -182,5 +182,19 @@ func handleCommand(value Value) Value {
 		}
 	}
 
+	if command == "FLUSHDB" { // we are eventually making new maps for both of the maps
+		storeMu.Lock()                  // we are not deleting but replacing with new maps, eventually go garbage collector will delete the old maps and free up the memory
+		store = make(map[string]string) // for basic string commands
+		storeMu.Unlock()
+
+		hashMu.Lock()
+		hash = make(map[string]map[string]string) // for hash commands
+		hashMu.Unlock()
+		return Value{
+			typ: '+',
+			str: "OK",
+		} // this only clears the RAM not the actual aof file that PERSISTS data.
+	}
+
 	return Value{}
 }
