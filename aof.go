@@ -14,8 +14,8 @@ type Aof struct {
 	mu   sync.Mutex
 }
 
-func NewAof() (*Aof, error) {
-	file, err := os.OpenFile("/app/data/database.aof", //NAME OF FILE
+func NewAof(path string) (*Aof, error) {
+	file, err := os.OpenFile(path, //NAME OF FILE
 		os.O_CREATE|os.O_RDWR|os.O_APPEND, // CREATE FILE IF NOT EXISTS, READ AND WRITE, APPEND MODE
 		0644)
 	if err != nil {
@@ -49,11 +49,12 @@ func (aof *Aof) Write(value Value) error {
 	return nil
 }
 func (aof *Aof) Read(callback func(value Value)) error {
-	data, err := io.ReadAll(aof.file)
+	_, err := aof.file.Seek(0, 0) // Move the file pointer to the beginning of the file
 	if err != nil {
 		return err
 	}
-	for len(data) > 0 { // Parse each value from the data
+	data, err := io.ReadAll(aof.file) // Read the entire file into memory
+	for len(data) > 0 {               // Parse each value from the data
 		value, consumed, err := parse(data)
 		if err != nil {
 			return err

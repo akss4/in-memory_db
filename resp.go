@@ -62,6 +62,11 @@ func parse(data []byte) (Value, int, error) {
 			return Value{}, 0, err
 		}
 
+		if length == -1 {
+			return Value{typ: '$', //null bulk string
+				str: ""}, end + 2, nil
+		}
+
 		start := end + 2
 		dataEnd := start + length
 		if dataEnd > len(data) {

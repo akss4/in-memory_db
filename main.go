@@ -71,7 +71,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	aof, err := NewAof() // create a new AOF instance after listening on the port, so that we can log the commands to the AOF file
+	aof, err := NewAof("/app/data/database.aof") // create a new AOF instance after listening on the port, so that we can log the commands to the AOF file
 	if err != nil {
 		fmt.Println("Error creating AOF:", err)
 		panic(err)
