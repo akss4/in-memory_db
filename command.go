@@ -126,5 +126,61 @@ func handleCommand(value Value) Value {
 		}
 	}
 
+	if command == "HGETALL" {
+		if len(value.array) != 2 {
+			return Value{
+				typ: '-',
+				str: "ERR wrong number of argument for 'HGETALL' command",
+			}
+		}
+		key := value.array[1].str
+		hashMu.RLock()
+		val := hash[key]
+		response := make([]Value, 0, len(val)*2)
+		for field, value := range val {
+			response = append(response,
+				Value{
+					typ: '$',
+					str: field,
+				},
+				Value{
+					typ: '$',
+					str: value,
+				},
+			)
+		}
+		hashMu.RUnlock()
+		return Value{
+			typ:   '*',
+			array: response,
+		}
+	}
+
+	if command == "HDEL" {
+		if len(value.array) != 3 {
+			return Value{
+				typ: '-',
+				str: "ERR wrong number of argument for 'HDEL' command",
+			}
+		}
+		key := value.array[1].str
+		field := value.array[2].str
+		hashMu.Lock()
+		_, ok := hash[key][field]
+		if !ok {
+			hashMu.Unlock()
+			return Value{
+				typ: ':',
+				num: 0,
+			}
+		}
+		delete(hash[key], field)
+		hashMu.Unlock()
+		return Value{
+			typ: ':',
+			num: 1,
+		}
+	}
+
 	return Value{}
 }
