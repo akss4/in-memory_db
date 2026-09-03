@@ -15,7 +15,7 @@ type Aof struct {
 }
 
 func NewAof() (*Aof, error) {
-	file, err := os.OpenFile("database.aof", //NAME OF FILE
+	file, err := os.OpenFile("/app/data/database.aof", //NAME OF FILE
 		os.O_CREATE|os.O_RDWR|os.O_APPEND, // CREATE FILE IF NOT EXISTS, READ AND WRITE, APPEND MODE
 		0644)
 	if err != nil {

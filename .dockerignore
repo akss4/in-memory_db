@@ -1,0 +1,6 @@
+.git
+.gitignore
+database.aof
+README.md
+Dockerfile
+.dockerignore
