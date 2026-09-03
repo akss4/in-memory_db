@@ -3,7 +3,6 @@
 A Redis-like in-memory database server built from scratch in Go.
 
 The goal is to understand how a networked database works internally — from accepting TCP connections and reading raw bytes to parsing RESP, executing commands, storing data, and eventually persisting it to disk.
-
 ## Current Progress
 
 - TCP server listening on port `6379`
@@ -28,7 +27,19 @@ PING\r\n
 ```
 
 into a structured `Value`.
-
+- Command extraction and case-insensitive command handling
+- `PING`
+- `SET` / `GET`
+- `HSET` / `HGET` / `HGETALL`
+- `HDEL`
+- RESP response encoding
+- Multiple concurrent client connections
+- AOF persistence
+- AOF replay on server startup
+- Periodic AOF syncing
+- AOF clearing
+- `FLUSHDB`
+- AOF close handling
 ## Architecture
 
 ```text
@@ -56,7 +67,6 @@ RESP Response
   ▼
 Client
 ```
-
 ### Important TCP concept
 
 TCP is a **byte stream**, not a message protocol.
@@ -70,7 +80,6 @@ READ #3 → "PING\r\n"
 ```
 
 The server therefore keeps incomplete data until enough bytes have arrived to parse a complete RESP value.
-
 ## RESP Parser
 
 The parser has this shape:
@@ -106,7 +115,6 @@ Invalid data
       ↓
 actual parsing error
 ```
-
 ## Buffering
 
 The server maintains a temporary network buffer and an accumulated data buffer:
@@ -139,12 +147,10 @@ For example:
 ```
 
 can be parsed as:
-
 ```text
 Value 1 → +hello
 Value 2 → +world
 ```
-
 ## Running the Server
 
 Run:
@@ -178,7 +184,6 @@ printf '+hello\r\n' | nc localhost 6379
 ```bash
 printf '*1\r\n$4\r\nPING\r\n' | nc localhost 6379
 ```
-
 ### Deliberately fragmented RESP command
 
 ```bash
@@ -186,41 +191,7 @@ printf '*1\r\n$4\r\nPING\r\n' | nc localhost 6379
 ```
 
 The server should accumulate the pieces and eventually parse the complete command.
-
-## Current Limitation
-
-The server can currently **parse** a Redis-style command, but it does not yet execute `PING` and return:
-
-```text
-+PONG\r\n
-```
-
-The current pipeline ends around:
-
-```text
-raw TCP bytes
-      ↓
-RESP parser
-      ↓
-Value
-      ↓
-printed to terminal
-```
-
-The next layer is:
-
-```text
-Value
-  ↓
-extract command
-  ↓
-execute command
-  ↓
-create RESP response
-```
-
 ## Roadmap
-
 ### Phase 1 — Networking
 
 - [x] TCP server
@@ -239,32 +210,34 @@ create RESP response
 - [x] Incomplete-data handling
 - [x] TCP fragmentation handling
 - [x] Multiple values in the input buffer
-
 ### Phase 3 — Command Execution
 
-- [ ] Extract command name
-- [ ] Implement `PING`
+- [x] Extract command name
+- [x] Implement `PING`
 - [ ] Implement `ECHO`
-- [ ] Implement `SET`
-- [ ] Implement `GET`
-- [ ] Implement command errors
-- [ ] Return proper RESP responses
+- [x] Implement `SET`
+- [x] Implement `GET`
+- [x] Implement command errors
+- [x] Return proper RESP responses
+- [x] Implement hash commands (`HSET`, `HGET`, `HGETALL`)
+- [x] Implement `HDEL`
 
 ### Phase 4 — In-Memory Database
 
-- [ ] Create key/value storage
-- [ ] Store strings
-- [ ] Retrieve strings
-- [ ] Handle missing keys
-- [ ] Handle overwrites
+- [x] Create key/value storage
+- [x] Store strings
+- [x] Retrieve strings
+- [x] Handle missing keys
+- [x] Handle overwrites
 - [ ] Add expiration/TTL support
-
 ### Phase 5 — Persistence
 
-- [ ] Design on-disk format
-- [ ] Write database state to disk
-- [ ] Load state when the server starts
-- [ ] Handle persistence safely
+- [x] Design on-disk format
+- [x] Write database state to disk
+- [x] Load state when the server starts
+- [x] Handle persistence safely
+- [x] Periodic AOF syncing
+- [x] Clear persistent state with `FLUSHDB`
 
 ### Phase 6 — Production Improvements
 
@@ -276,6 +249,13 @@ create RESP response
 - [ ] Graceful shutdown
 - [ ] Broader RESP support
 
+### Extensions
+
+- [x] `HDEL`
+- [x] `FLUSHDB`
+- [ ] `ECHO`
+- [ ] Expiration/TTL
+- [ ] More Redis commands
 ## Learning Goals
 
 This project is being built to understand:
@@ -294,7 +274,6 @@ This project is being built to understand:
 - Systems programming
 
 The emphasis is on understanding **why each layer exists**, rather than simply copying an implementation.
-
 ## Tech Stack
 
 - **Language:** Go
@@ -302,26 +281,22 @@ The emphasis is on understanding **why each layer exists**, rather than simply c
 - **Protocol:** RESP
 - **Testing:** `netcat`
 - **Database:** Custom in-memory implementation
-- **Persistence:** Planned custom disk format
+- **Persistence:** Custom AOF-based disk persistence
 
 ## Project Status
 
-**Early development — TCP networking and RESP parsing are working.**
+**Core database functionality complete — extensions and production improvements next.**
 
-The server can receive fragmented RESP data over TCP, accumulate it correctly, parse complete values, and track consumed bytes.
+The server can receive fragmented RESP data over TCP, accumulate it correctly, parse complete values, execute commands, return RESP responses, persist mutating commands to disk, and rebuild its in-memory state when the server starts.
 
 ### Next milestone
 
-Turn:
+Complete the remaining extensions and production improvements:
 
-```text
-*1\r\n$4\r\nPING\r\n
-```
-
-into:
-
-```text
-+PONG\r\n
-```
-
-and make the first real Redis command work.
+- `ECHO`
+- Expiration/TTL
+- More Redis commands
+- Automated tests
+- Benchmarks
+- Graceful shutdown
+- Broader RESP support
