@@ -83,6 +83,8 @@ func main() {
 		fmt.Println("Error reading AOF:", err)
 		panic(err)
 	}
+
+	defer aof.Close() // close the AOF file when the server is shutting down
 	for {
 		conn, err := listener.Accept()
 		if err != nil {

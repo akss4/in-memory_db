@@ -77,3 +77,8 @@ func (aof *Aof) Clear() error {
 	}
 	return nil
 }
+func (aof *Aof) Close() error {
+	aof.mu.Lock()
+	defer aof.mu.Unlock()
+	return aof.file.Close()
+}
