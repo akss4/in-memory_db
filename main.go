@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 )
 
 func handleConnection(conn net.Conn, aof *Aof) {
@@ -107,7 +110,7 @@ func acceptConnections(listener net.Listener, aof *Aof) {
 }
 
 func main() {
-	listener, aof, err := startServer(":6379", "/app/data/database.aof")
+	listener, aof, err := startServer(":6379", "./data/database.aof")
 	if err != nil {
 		fmt.Println("Error starting server:", err)
 		panic(err)
@@ -116,5 +119,17 @@ func main() {
 	defer listener.Close()
 	defer aof.Close()
 
-	acceptConnections(listener, aof)
+	go acceptConnections(listener, aof)
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	<-sigChan
+
+	fmt.Println("Shutting down server...") // gracaefull shutdown
+
+	fmt.Println("Closing connections...")
+
+	listener.Close()
+	aof.Close()
 }

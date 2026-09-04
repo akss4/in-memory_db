@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -18,6 +19,9 @@ type Aof struct {
 }
 
 func NewAof(path string) (*Aof, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return nil, err
+	}
 	file, err := os.OpenFile(path, //NAME OF FILE
 		os.O_CREATE|os.O_RDWR|os.O_APPEND, // CREATE FILE IF NOT EXISTS, READ AND WRITE, APPEND MODE
 		0644)
