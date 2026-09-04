@@ -1,159 +1,220 @@
-# in-memory_db
+# In-Memory Database
 
 A Redis-like in-memory database server built from scratch in Go.
 
-The goal is to understand how a networked database works internally — from accepting TCP connections and reading raw bytes to parsing RESP, executing commands, storing data, and eventually persisting it to disk.
-## Current Progress
+The goal of this project is to understand how a networked database works internally — from TCP connections and raw bytes, through RESP parsing and command execution, to concurrency, persistence, testing, and cloud deployment.
 
-- TCP server listening on port `6379`
-- Client connection handling
-- Reading raw data from TCP connections
-- RESP parser
-- Simple Strings (`+`)
-- Integers (`:`)
-- Bulk Strings (`$`)
-- Arrays (`*`)
-- Incomplete-data handling
-- TCP fragmentation handling
-- Persistent accumulation of bytes across reads
-- Tracking consumed bytes
-- Removing consumed bytes from the input buffer
-- Successfully parsing fragmented commands such as:
+## Features
+
+- TCP server on port `6379`
+- RESP protocol parsing
+- TCP stream and fragmentation handling
+- Multiple commands in a single TCP read
+- Concurrent client connections
+- In-memory string storage
+- In-memory hash storage
+- Command validation
+- AOF (Append-Only File) persistence
+- Startup recovery from AOF
+- Periodic AOF synchronization
+- Graceful shutdown
+- Docker deployment
+- Persistent Docker volume
+- Public TCP deployment
+- Automated tests
+- Go race detector
+- GitHub Actions CI
+
+## Supported Commands
+
+### Strings
 
 ```text
-*1\r\n
-$4\r\n
-PING\r\n
+PING
+SET key value
+GET key
 ```
 
-into a structured `Value`.
-- Command extraction and case-insensitive command handling
-- `PING`
-- `SET` / `GET`
-- `HSET` / `HGET` / `HGETALL`
-- `HDEL`
-- RESP response encoding
-- Multiple concurrent client connections
-- AOF persistence
-- AOF replay on server startup
-- Periodic AOF syncing
-- AOF clearing
-- `FLUSHDB`
-- AOF close handling
+### Hashes
+
+```text
+HSET key field value
+HGET key field
+HGETALL key
+HDEL key field
+```
+
+### Database
+
+```text
+FLUSHDB
+```
+
 ## Architecture
 
 ```text
-Client
-  │
-  │ TCP connection
-  ▼
-TCP Server
-  │
-  │ raw bytes
-  ▼
-Read Buffer
-  │
-  │ accumulate bytes
-  ▼
-RESP Parser
-  │
-  │ Value
-  ▼
-Command Execution
-  │
-  ▼
-RESP Response
-  │
-  ▼
-Client
-```
-### Important TCP concept
-
-TCP is a **byte stream**, not a message protocol.
-
-One Redis command may arrive across multiple reads:
-
-```text
-READ #1 → "*1\r\n"
-READ #2 → "$4\r\n"
-READ #3 → "PING\r\n"
+                    Client
+                      │
+                      │ TCP / RESP
+                      ▼
+               TCP Server :6379
+                      │
+                      ▼
+                RESP Parser
+                      │
+                      ▼
+              Command Handler
+                 │         │
+          ┌──────┘         └──────┐
+          ▼                       ▼
+   In-Memory Store             AOF
+   Strings + Hashes             │
+          │                      ▼
+          │                  Disk File
+          │
+          └──────────────► RESP Response
 ```
 
-The server therefore keeps incomplete data until enough bytes have arrived to parse a complete RESP value.
-## RESP Parser
+## TCP and RESP
 
-The parser has this shape:
+TCP is a byte stream rather than a message protocol.
 
-```go
-func parse(data []byte) (Value, int, error)
-```
+A single command can arrive across multiple network reads. The server therefore maintains an accumulated buffer until a complete RESP value can be parsed.
 
-It returns:
+The parser returns:
 
 1. The parsed `Value`
 2. The number of bytes consumed
 3. An error
 
-The parser uses a shared incomplete-data error:
+This also allows multiple RESP values to exist inside the same TCP read.
 
-```go
-var errIncomplete = errors.New("Incomplete Data")
-```
+## Concurrency
 
-This lets the server distinguish:
+Each accepted TCP connection is handled independently using a goroutine.
 
-```text
-Incomplete data
-      ↓
-wait for another read
-```
-
-from:
+Shared database state is protected using Go mutexes.
 
 ```text
-Invalid data
-      ↓
-actual parsing error
-```
-## Buffering
-
-The server maintains a temporary network buffer and an accumulated data buffer:
-
-```go
-buffer := make([]byte, 1024)
-data := make([]byte, 0)
-```
-
-After each read:
-
-```go
-data = append(data, buffer[:n]...)
+Client 1 ──┐
+Client 2 ──┼──► TCP Server
+Client 3 ──┘       │
+                   ▼
+              Command Handler
+                   │
+              ┌────┴────┐
+              ▼         ▼
+           Strings     Hashes
+              │         │
+             RWMutex   RWMutex
 ```
 
-When parsing succeeds:
+The project is tested with Go's race detector:
 
-```go
-data = data[consumed:]
+```bash
+go test -race ./...
 ```
 
-Only the bytes belonging to the parsed value are removed.
+## Persistence
 
-This allows multiple RESP values to exist in one TCP read.
+The database uses an Append-Only File (AOF) for persistence.
 
-For example:
+Writable commands are appended to the AOF:
 
 ```text
-+hello\r\n+world\r\n
+SET
+HSET
+HDEL
 ```
 
-can be parsed as:
+When the server starts, the AOF is replayed through the command handler to reconstruct the in-memory state.
+
+The AOF is periodically synchronized to disk and synchronized again during shutdown.
+
+### Persistence Flow
+
 ```text
-Value 1 → +hello
-Value 2 → +world
+Client
+  │
+  ▼
+Command
+  │
+  ├──────────────► In-Memory Store
+  │
+  └──────────────► AOF
+                       │
+                       ▼
+                    Disk
+                       │
+                 Server restart
+                       │
+                       ▼
+                  AOF replay
+                       │
+                       ▼
+                Reconstructed state
 ```
-## Running the Server
 
-Run:
+## Persistence Verification
+
+Persistence was verified on the deployed Docker instance.
+
+Before restarting the container:
+
+```text
+SET test survives
+HSET user status alive
+
+GET test
+→ "survives"
+
+HGET user status
+→ "alive"
+```
+
+The container was then restarted:
+
+```bash
+sudo docker restart in-memory-db
+```
+
+The client connection closed as expected.
+
+After reconnecting:
+
+```text
+GET test
+→ "survives"
+
+HGET user status
+→ "alive"
+```
+
+This verified:
+
+```text
+Remote write
+    ↓
+AOF
+    ↓
+Docker container restart
+    ↓
+AOF replay
+    ↓
+Data recovered
+    ↓
+Remote read
+```
+
+## Running Locally
+
+### Requirements
+
+- Go
+- `redis-cli` or another RESP-compatible client
+- Docker (optional)
+
+Run directly:
 
 ```bash
 go run .
@@ -165,138 +226,303 @@ The server listens on:
 localhost:6379
 ```
 
-Expected output:
+Test:
+
+```bash
+redis-cli -p 6379
+```
+
+Then:
 
 ```text
-Server is listening on port 6379...
+PING
+SET name akash
+GET name
 ```
+
+## Docker
+
+Build the image:
+
+```bash
+docker build -t in-memory-db:latest .
+```
+
+Run:
+
+```bash
+docker run -d \
+  --name in-memory-db \
+  -p 6379:6379 \
+  -v in-memory-db-data:/app/data \
+  --restart unless-stopped \
+  in-memory-db:latest
+```
+
+The Docker volume keeps the AOF outside the container filesystem, allowing database state to survive container recreation.
+
+## Public Deployment
+
+The database is deployed on a VyuhStack Compute Sandbox VM using Docker.
+
+```text
+Debian 12
+   │
+   ▼
+Docker Engine
+   │
+   ▼
+in-memory-db container
+   │
+   ▼
+TCP :6379
+```
+
+### Cloud Networking Challenge
+
+The VM platform provides public application access through an HTTPS application-port path.
+
+The database communicates using raw TCP/RESP on port `6379`.
+
+Therefore, the database could not simply be exposed through the normal HTTP application endpoint.
+
+Instead, a TCP tunneling layer was used without changing the database protocol or server architecture.
+
+```text
+Internet
+   │
+   │ TCP
+   ▼
+Portwarp
+   │
+   ▼
+VyuhStack VM
+   │
+   ▼
+Docker :6379
+   │
+   ▼
+In-Memory Database
+```
+
+This preserved the server's native TCP/RESP interface on port `6379`.
+
+### Connecting to the Public Database
+
+The active public endpoint is provided by the Portwarp tunnel.
+
+```bash
+redis-cli -h elmbv279.free.pwrp.cc -p 12173
+```
+
+Example:
+
+```text
+PING
+→ PONG
+
+SET cloud hello
+→ OK
+
+GET cloud
+→ "hello"
+```
+
+Remote hash operations were also verified:
+
+```text
+HSET user name aks
+→ OK
+
+HGET user name
+→ "aks"
+
+HSET user age 21
+→ OK
+
+HGETALL user
+→ name / aks
+→ age / 21
+```
+
+> The public endpoint may change when the tunnel is recreated. Use the currently assigned Portwarp endpoint.
+
+### Public Deployment Flow
+
+```text
+Laptop
+   │
+   │ TCP / RESP
+   ▼
+Public TCP Endpoint
+   │
+   ▼
+Portwarp TCP Tunnel
+   │
+   ▼
+VyuhStack VM
+   │
+   ▼
+Docker Container
+   │
+   ▼
+Go Database :6379
+```
+
+## Deployment Environment
+
+### VM
+
+- VyuhStack Compute Sandbox
+- Debian 12
+- 1 vCPU
+- 1 GB RAM
+- 10 GB storage
+
+### Container
+
+- Docker Engine
+- `in-memory-db:latest`
+- Port `6379`
+- Persistent Docker volume
+- `restart unless-stopped`
+
+### Public Networking
+
+- Portwarp
+- TCP tunnel
+- Local port `6379`
+- Tunnel configured for automatic reconnect on VM startup
 
 ## Testing
 
-### Simple String
+Run all tests:
 
 ```bash
-printf '+hello\r\n' | nc localhost 6379
+go test ./...
 ```
 
-### RESP PING command
+Run with the race detector:
 
 ```bash
-printf '*1\r\n$4\r\nPING\r\n' | nc localhost 6379
+go test -race ./...
 ```
-### Deliberately fragmented RESP command
+
+Tests cover:
+
+- RESP parsing
+- TCP server behavior
+- Multiple commands in one read
+- Fragmented TCP commands
+- Multiple simultaneous clients
+- Command execution
+- Persistence behavior
+
+## CI
+
+GitHub Actions automatically runs:
 
 ```bash
-(printf '*1\r\n'; sleep 1; printf '$4\r\n'; sleep 1; printf 'PING\r\n') | nc localhost 6379
+go test ./...
+go test -race ./...
 ```
 
-The server should accumulate the pieces and eventually parse the complete command.
-## Roadmap
-### Phase 1 — Networking
+on pushes and pull requests.
+
+## Engineering Challenges
+
+### TCP Message Boundaries
+
+TCP does not preserve application-level message boundaries.
+
+The server handles both complete and fragmented RESP messages while preserving unconsumed bytes for subsequent reads.
+
+### Concurrent Access
+
+Multiple clients can access the same in-memory data simultaneously.
+
+Separate read/write locks protect the string and hash stores.
+
+### Persistence
+
+The in-memory state cannot survive a process restart by itself.
+
+A custom AOF layer was introduced so commands can be replayed when the server starts.
+
+### Cloud Networking
+
+The selected VM platform did not directly expose a raw public TCP port for the database.
+
+Rather than changing the database protocol or architecture, a TCP tunneling layer was added externally.
+
+This preserved the server's native TCP/RESP interface on port `6379`.
+
+## Project Status
 
 - [x] TCP server
-- [x] Listen on port `6379`
-- [x] Accept connections
-- [x] Read from connections
-- [x] Write responses
-- [x] Connection cleanup
-
-### Phase 2 — RESP Protocol
-
-- [x] Simple Strings
-- [x] Integers
-- [x] Bulk Strings
-- [x] Arrays
-- [x] Incomplete-data handling
+- [x] RESP parser
 - [x] TCP fragmentation handling
-- [x] Multiple values in the input buffer
-### Phase 3 — Command Execution
+- [x] Multiple commands per read
+- [x] String commands
+- [x] Hash commands
+- [x] Command validation
+- [x] Concurrency protection
+- [x] AOF persistence
+- [x] AOF recovery
+- [x] Periodic synchronization
+- [x] Graceful shutdown
+- [x] Unit/integration testing
+- [x] Race testing
+- [x] GitHub Actions CI
+- [x] Dockerization
+- [x] Persistent Docker volume
+- [x] Cloud VM deployment
+- [x] Public TCP access
+- [x] Remote database testing
+- [x] Persistence verification after container restart
 
-- [x] Extract command name
-- [x] Implement `PING`
-- [ ] Implement `ECHO`
-- [x] Implement `SET`
-- [x] Implement `GET`
-- [x] Implement command errors
-- [x] Return proper RESP responses
-- [x] Implement hash commands (`HSET`, `HGET`, `HGETALL`)
-- [x] Implement `HDEL`
+## Possible Future Extensions
 
-### Phase 4 — In-Memory Database
+- TTL / key expiration
+- More Redis commands
+- Better command dispatch architecture
+- Improved error responses
+- More extensive AOF crash-recovery tests
+- Benchmarks
+- Authentication
+- More RESP features
+- Performance improvements
 
-- [x] Create key/value storage
-- [x] Store strings
-- [x] Retrieve strings
-- [x] Handle missing keys
-- [x] Handle overwrites
-- [ ] Add expiration/TTL support
-### Phase 5 — Persistence
-
-- [x] Design on-disk format
-- [x] Write database state to disk
-- [x] Load state when the server starts
-- [x] Handle persistence safely
-- [x] Periodic AOF syncing
-- [x] Clear persistent state with `FLUSHDB`
-
-### Phase 6 — Production Improvements
-
-- [ ] Command dispatch
-- [ ] Concurrency improvements
-- [ ] Robust error handling
-- [ ] Automated tests
-- [ ] Benchmarks
-- [ ] Graceful shutdown
-- [ ] Broader RESP support
-
-### Extensions
-
-- [x] `HDEL`
-- [x] `FLUSHDB`
-- [ ] `ECHO`
-- [ ] Expiration/TTL
-- [ ] More Redis commands
 ## Learning Goals
 
 This project is being built to understand:
 
 - TCP networking in Go
-- Byte slices and buffers
 - Stream-oriented protocols
+- RESP
+- Byte buffers
 - Protocol parsing
-- Error handling
-- Nested data structures
-- Command dispatch
+- Command execution
 - In-memory data structures
-- Database persistence
+- File persistence
 - Concurrency
+- Synchronization
 - Testing
+- Docker
+- Cloud deployment
 - Systems programming
 
-The emphasis is on understanding **why each layer exists**, rather than simply copying an implementation.
+The emphasis is on understanding why each layer exists and how the pieces interact.
+
 ## Tech Stack
 
 - **Language:** Go
-- **Networking:** Go `net` package
+- **Networking:** Go `net`
 - **Protocol:** RESP
-- **Testing:** `netcat`
-- **Database:** Custom in-memory implementation
-- **Persistence:** Custom AOF-based disk persistence
-
-## Project Status
-
-**Core database functionality complete — extensions and production improvements next.**
-
-The server can receive fragmented RESP data over TCP, accumulate it correctly, parse complete values, execute commands, return RESP responses, persist mutating commands to disk, and rebuild its in-memory state when the server starts.
-
-### Next milestone
-
-Complete the remaining extensions and production improvements:
-
-- `ECHO`
-- Expiration/TTL
-- More Redis commands
-- Automated tests
-- Benchmarks
-- Graceful shutdown
-- Broader RESP support
+- **Storage:** Custom in-memory data structures
+- **Persistence:** Custom AOF
+- **Containerization:** Docker
+- **Deployment:** VyuhStack VM
+- **TCP tunneling:** Portwarp
+- **CI:** GitHub Actions
+- **Testing:** Go testing + race detector
