@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"net"
+	"sync"
 	"testing"
 )
 
@@ -190,7 +191,7 @@ func TestTCPFragmentedCommand(t *testing.T) {
 	}
 }
 
-func TESTMultipleClients(t *testing.T) {
+func TestMultipleClients(t *testing.T) {
 	listener, aof, err := startServer(
 		"127.0.0.1:0",
 		t.TempDir()+"/test.aof",
@@ -214,4 +215,55 @@ func TESTMultipleClients(t *testing.T) {
 		t.Fatalf("Failed to connect client 2: %v", err)
 	}
 	defer conn2.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+
+		_, err := conn1.Write([]byte(
+			"*3\r\n$3\r\nSET\r\n$4\r\nkey1\r\n$7\r\nclient1\r\n",
+		))
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		response := make([]byte, 5)
+		_, err = io.ReadFull(conn1, response)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		if string(response) != "+OK\r\n" {
+			t.Errorf("expected +OK, got %q", response)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+
+		_, err := conn2.Write([]byte(
+			"*3\r\n$3\r\nSET\r\n$4\r\nkey2\r\n$7\r\nclient2\r\n",
+		))
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		response := make([]byte, 5)
+		_, err = io.ReadFull(conn2, response)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		if string(response) != "+OK\r\n" {
+			t.Errorf("expected +OK, got %q", response)
+		}
+	}()
+
+	wg.Wait()
 }
