@@ -39,8 +39,6 @@ func handleConnection(conn net.Conn, aof *Aof) {
 			}
 
 			data = data[consumed:] // Remove the consumed bytes from the data slice
-			fmt.Println("Parsed Value:", value)
-			fmt.Println("Bytes consumed:", consumed)
 
 			if len(value.array) == 0 {
 				fmt.Println("Invalid command: empty array")
