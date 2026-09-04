@@ -198,3 +198,22 @@ func handleCommand(value Value) Value {
 
 	return Value{}
 }
+
+func isWritableCommand(value Value) bool { /// aof wrotye without check if its valid or not soo we fixed tht
+	if value.typ != '*' || len(value.array) == 0 || value.array[0].typ != '$' {
+		return false
+	}
+
+	command := strings.ToUpper(value.array[0].str)
+
+	switch command {
+	case "SET":
+		return len(value.array) == 3
+	case "HSET":
+		return len(value.array) == 4
+	case "HDEL":
+		return len(value.array) == 3
+	default:
+		return false
+	}
+}

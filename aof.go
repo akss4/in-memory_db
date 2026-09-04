@@ -9,9 +9,12 @@ import (
 )
 
 type Aof struct {
-	file *os.File
-	rd   *bufio.Reader
-	mu   sync.Mutex
+	file      *os.File
+	rd        *bufio.Reader
+	mu        sync.Mutex
+	done      chan struct{}
+	wg        sync.WaitGroup
+	closeOnce sync.Once
 }
 
 func NewAof(path string) (*Aof, error) {
@@ -25,14 +28,26 @@ func NewAof(path string) (*Aof, error) {
 	aof := &Aof{
 		file: file,
 		rd:   rd,
+		done: make(chan struct{}),
 	}
-	go func() {
-		for {
-			time.Sleep(time.Second)
+	aof.wg.Add(1) //
 
-			aof.mu.Lock()
-			aof.file.Sync()
-			aof.mu.Unlock()
+	go func() {
+		defer aof.wg.Done()
+
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				aof.mu.Lock()
+				_ = aof.file.Sync()
+				aof.mu.Unlock()
+
+			case <-aof.done:
+				return
+			}
 		}
 	}()
 	return aof, nil
@@ -79,7 +94,23 @@ func (aof *Aof) Clear() error {
 	return nil
 }
 func (aof *Aof) Close() error {
-	aof.mu.Lock()
-	defer aof.mu.Unlock()
-	return aof.file.Close()
+	var err error
+
+	aof.closeOnce.Do(func() {
+		close(aof.done)
+
+		aof.wg.Wait()
+
+		aof.mu.Lock()
+		defer aof.mu.Unlock()
+
+		if syncErr := aof.file.Sync(); syncErr != nil {
+			err = syncErr
+			return
+		}
+
+		err = aof.file.Close()
+	})
+
+	return err
 }
