@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func handleConnection(conn net.Conn, aof *Aof) {
@@ -104,6 +105,42 @@ func acceptConnections(listener net.Listener, aof *Aof) {
 		}
 
 		go handleConnection(conn, aof)
+	}
+}
+
+// ttl expiration background goroutine
+func startExpirationCleaner() {
+	ticker := time.NewTicker(time.Second) // create a ticker that ticks every second
+	defer ticker.Stop()                   // stop the ticker when the function returns
+	for range ticker.C {                  // for each tick, we check the expiration map for expired keys and delete them from the store and expiration map
+
+		type expiredKey struct {
+			key    string
+			expiry time.Time
+		}
+		expiredKeys := make([]expiredKey, 0)
+		expirationMu.RLock()
+		for key, expiry := range expiration { // we check each value in map and if it is expired, we delete it from the map. We use a read lock to avoid blocking other goroutines that are reading from the map.
+			if time.Now().After(expiry) { // checking if expiration is due or not
+				expiredKeys = append(expiredKeys, expiredKey{key: key, expiry: expiry}) // store it in
+			}
+		}
+		expirationMu.RUnlock()
+		for _, item := range expiredKeys { // we range it in order to delete the expired keys from the store and expiration map. We use a write lock to avoid blocking other goroutines that are writing to the map.
+			storeMu.Lock()
+			expirationMu.Lock() // tjhis is to avoid race condition when we are, a specific pattern that store is locked 1st and expiration after tha
+
+			currentExpiry, ok := expiration[item.key]
+			if ok && currentExpiry.Equal(item.expiry) {
+
+				delete(store, item.key)
+				delete(expiration, item.key)
+			}
+
+			expirationMu.Unlock()
+			storeMu.Unlock()
+		}
+
 	}
 }
 

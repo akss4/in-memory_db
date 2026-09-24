@@ -1,8 +1,10 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var store = make(map[string]string)
@@ -10,6 +12,9 @@ var storeMu = sync.RWMutex{} // for basic string commands
 
 var hash = make(map[string]map[string]string)
 var hashMu = sync.RWMutex{} // for hash commands
+
+var expiration = make(map[string]time.Time)
+var expirationMu = sync.RWMutex{} // for expiration commands
 
 func handleCommand(value Value) Value {
 	if value.typ != '*' {
@@ -37,14 +42,38 @@ func handleCommand(value Value) Value {
 		}
 	}
 	if command == "SET" {
-		if len(value.array) != 3 {
+		if len(value.array) != 3 && len(value.array) != 5 {
 			return Value{
 				typ: '-',
 				str: "ERR wrong number of argument for 'SET' command",
 			}
 		}
+		if len(value.array) == 5 {
+			if strings.ToUpper(value.array[3].str) != "EX" {
+				return Value{
+					typ: '-',
+					str: "ERR syntax error",
+				}
+			}
+			seconds, err := strconv.Atoi(value.array[4].str)
+			if err != nil {
+				return Value{
+					typ: '-',
+					str: "ERR invalid expire time",
+				}
+			}
+			expirationMu.Lock()
+			expiration[value.array[1].str] = time.Now().Add(time.Duration(seconds) * time.Second)
+			expirationMu.Unlock()
+		}
+
 		key := value.array[1].str
 		val := value.array[2].str
+		if len(value.array) == 3 {
+			expirationMu.Lock()
+			delete(expiration, key) // remove expiration if it exists because 3 value persist command
+			expirationMu.Unlock()
+		}
 		storeMu.Lock()
 		store[key] = val
 		storeMu.Unlock()
@@ -63,6 +92,22 @@ func handleCommand(value Value) Value {
 
 		}
 		key := value.array[1].str
+
+		expirationMu.RLock()                             // checking expiration
+		expirationTime, hasExpiration := expiration[key] // has expirration is coma ok syntax its a bool and expiration time is normal value
+		expirationMu.RUnlock()
+		if hasExpiration && time.Now().After(expirationTime) {
+			storeMu.Lock()
+			expirationMu.Lock()
+			delete(store, key)
+			delete(expiration, key)
+			storeMu.Unlock()
+			expirationMu.Unlock()
+			return Value{
+				typ: '$',
+				str: "",
+			}
+		}
 		storeMu.RLock()
 		val, ok := store[key]
 		storeMu.RUnlock()
