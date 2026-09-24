@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func resetDatabase() {
 	store = make(map[string]string)
@@ -28,7 +31,7 @@ func TestSetAndGet(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(get)
+	result, _ := handleCommand(get)
 
 	if result.str != "bunny" {
 		t.Fatalf("expected bunny, got %q", result.str)
@@ -58,7 +61,7 @@ func TestHSetAndHGet(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(hget)
+	result, _ := handleCommand(hget)
 
 	if result.str != "bunny" {
 		t.Fatalf("expected bunny, got %q", result.str)
@@ -99,7 +102,7 @@ func TestHSetAndHGetAll(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(hgetall)
+	result, _ := handleCommand(hgetall)
 	if len(result.array) != 4 {
 		t.Fatalf("expected 4 values, got %d", len(result.array))
 	}
@@ -142,7 +145,7 @@ func TestHSetAndHDel(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(hdel)
+	result, _ := handleCommand(hdel)
 
 	if result.num != 1 {
 		t.Fatalf("expected 1, got %d", result.num)
@@ -157,7 +160,7 @@ func TestHSetAndHDel(t *testing.T) {
 		},
 	}
 
-	result = handleCommand(hget)
+	result, _ = handleCommand(hget)
 
 	if result.typ != '$' || result.str != "" {
 		t.Fatalf("expected null value, got %+v", result)
@@ -196,7 +199,7 @@ func TestFlushDB(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(flush)
+	result, _ := handleCommand(flush)
 
 	if result.str != "OK" {
 		t.Fatalf("expected OK, got %q", result.str)
@@ -210,7 +213,7 @@ func TestFlushDB(t *testing.T) {
 		},
 	}
 
-	result = handleCommand(get)
+	result, _ = handleCommand(get)
 
 	if result.typ != '$' || result.str != "" {
 		t.Fatalf("expected name to be deleted, got %+v", result)
@@ -225,7 +228,7 @@ func TestFlushDB(t *testing.T) {
 		},
 	}
 
-	result = handleCommand(hget)
+	result, _ = handleCommand(hget)
 
 	if result.typ != '$' || result.str != "" {
 		t.Fatalf("expected hash to be deleted, got %+v", result)
@@ -242,7 +245,7 @@ func TestGetMissingKey(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(get)
+	result, _ := handleCommand(get)
 
 	if result.typ != '$' || result.str != "" {
 		t.Fatalf("expected null value, got %+v", result)
@@ -281,7 +284,7 @@ func TestSetOverwrite(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(get)
+	result, _ := handleCommand(get)
 
 	if result.str != "rabbit" {
 		t.Fatalf("expected rabbit, got %q", result.str)
@@ -323,7 +326,7 @@ func TestHSetOverwrite(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(hget)
+	result, _ := handleCommand(hget)
 
 	if result.str != "rabbit" {
 		t.Fatalf("expected rabbit, got %q", result.str)
@@ -341,7 +344,7 @@ func TestHDelMissingField(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(hdel)
+	result, _ := handleCommand(hdel)
 
 	if result.num != 0 {
 		t.Fatalf("expected 0, got %d", result.num)
@@ -359,7 +362,7 @@ func TestHGetMissingHash(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(hget)
+	result, _ := handleCommand(hget)
 
 	if result.typ != '$' || result.str != "" {
 		t.Fatalf("expected null value, got %+v", result)
@@ -389,7 +392,7 @@ func TestHGetMissingField(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(hget)
+	result, _ := handleCommand(hget)
 
 	if result.typ != '$' || result.str != "" {
 		t.Fatalf("expected null value, got %+v", result)
@@ -407,9 +410,54 @@ func TestSetInvalidArguments(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(set)
+	result, _ := handleCommand(set)
 
 	if result.typ != '-' {
 		t.Fatalf("expected error response, got type %q", result.typ)
+	}
+}
+
+func TestTTLResponse(t *testing.T) {
+	resetDatabase()
+
+	set := Value{
+		typ: '*',
+		array: []Value{
+			{typ: '$', str: "SET"},
+			{typ: '$', str: "name"},
+			{typ: '$', str: "Akash"},
+			{typ: '$', str: "EX"},
+			{typ: '$', str: "2"},
+		},
+	}
+
+	result, _ := handleCommand(set)
+
+	if result.typ != '+' || result.str != "OK" {
+		t.Fatalf("expected SET to succeed, got %+v", result)
+	}
+
+	// Key should exist before expiration.
+	get := Value{
+		typ: '*',
+		array: []Value{
+			{typ: '$', str: "GET"},
+			{typ: '$', str: "name"},
+		},
+	}
+
+	result, _ = handleCommand(get)
+
+	if result.typ != '$' || result.str != "Akash" {
+		t.Fatalf("expected Akash before expiration, got %+v", result)
+	}
+
+	// Wait for TTL to expire and background cleanup to run.
+	time.Sleep(3 * time.Second)
+
+	result, _ = handleCommand(get)
+
+	if result.typ != '$' || result.str != "" { // nil
+		t.Fatalf("expected key to expire, got %+v", result)
 	}
 }

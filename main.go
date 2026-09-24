@@ -46,9 +46,12 @@ func handleConnection(conn net.Conn, aof *Aof) {
 				continue
 			}
 
+			response, expiry := handleCommand(value) // get sresponce and expiry
+
 			command := strings.ToUpper(value.array[0].str) // Get the command name from the parsed value
-			if isWritableCommand(value) {
-				err := aof.Write(value)
+			if isWritableCommand(value) {                  // actually writes in aof persists data
+				aofCommand := commandForAOF(value, expiry) // aftyer reciving from handle command then only we write in aof
+				err := aof.Write(aofCommand)
 				if err != nil {
 					fmt.Println("Error writing to AOF:", err)
 					break
@@ -62,7 +65,7 @@ func handleConnection(conn net.Conn, aof *Aof) {
 					break
 				}
 			}
-			response := handleCommand(value)
+
 			encodedResponse := encode(response)
 
 			_, err = conn.Write(encodedResponse)
@@ -150,6 +153,7 @@ func main() {
 		fmt.Println("Error starting server:", err)
 		panic(err)
 	}
+	go startExpirationCleaner() // start the expiration cleaner goroutine
 
 	defer listener.Close()
 	defer aof.Close()

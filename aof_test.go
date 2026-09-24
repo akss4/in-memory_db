@@ -268,7 +268,7 @@ func TestAofReplay(t *testing.T) {
 		},
 	}
 
-	result := handleCommand(get)
+	result, _ := handleCommand(get)
 
 	if result.str != "bunny" {
 		t.Fatalf("expected bunny after replay, got %q", result.str)

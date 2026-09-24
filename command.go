@@ -16,15 +16,15 @@ var hashMu = sync.RWMutex{} // for hash commands
 var expiration = make(map[string]time.Time)
 var expirationMu = sync.RWMutex{} // for expiration commands
 
-func handleCommand(value Value) Value {
+func handleCommand(value Value) (Value, *time.Time) {
 	if value.typ != '*' {
-		return Value{}
+		return Value{}, nil
 	}
 	if len(value.array) == 0 {
-		return Value{}
+		return Value{}, nil
 	}
 	if value.array[0].typ != '$' {
-		return Value{}
+		return Value{}, nil
 	}
 	command := value.array[0].str
 	command = strings.ToUpper(command)
@@ -34,36 +34,41 @@ func handleCommand(value Value) Value {
 			return Value{
 				typ: '+',
 				str: value.array[1].str,
-			}
+			}, nil
 		}
 		return Value{
 			typ: '+',
 			str: "PONG",
-		}
+		}, nil
 	}
 	if command == "SET" {
+		var expiry *time.Time
 		if len(value.array) != 3 && len(value.array) != 5 {
 			return Value{
 				typ: '-',
 				str: "ERR wrong number of argument for 'SET' command",
-			}
+			}, nil
 		}
 		if len(value.array) == 5 {
 			if strings.ToUpper(value.array[3].str) != "EX" {
 				return Value{
 					typ: '-',
 					str: "ERR syntax error",
-				}
+				}, nil
 			}
 			seconds, err := strconv.Atoi(value.array[4].str)
 			if err != nil {
 				return Value{
 					typ: '-',
 					str: "ERR invalid expire time",
-				}
+				}, nil
 			}
+
+			calculatedExpiry := calculateExpiration(seconds)
+			expiry = &calculatedExpiry
+
 			expirationMu.Lock()
-			expiration[value.array[1].str] = time.Now().Add(time.Duration(seconds) * time.Second)
+			expiration[value.array[1].str] = calculatedExpiry
 			expirationMu.Unlock()
 		}
 
@@ -80,7 +85,7 @@ func handleCommand(value Value) Value {
 		return Value{
 			typ: '+',
 			str: "OK",
-		}
+		}, expiry
 	}
 
 	if command == "GET" {
@@ -88,7 +93,7 @@ func handleCommand(value Value) Value {
 			return Value{
 				typ: '-',
 				str: "ERR wrong number of argument for 'GET' command",
-			}
+			}, nil
 
 		}
 		key := value.array[1].str
@@ -106,7 +111,7 @@ func handleCommand(value Value) Value {
 			return Value{
 				typ: '$',
 				str: "",
-			}
+			}, nil
 		}
 		storeMu.RLock()
 		val, ok := store[key]
@@ -115,12 +120,12 @@ func handleCommand(value Value) Value {
 			return Value{
 				typ: '$',
 				str: "",
-			}
+			}, nil
 		}
 		return Value{
 			typ: '$',
 			str: val, // get returns the value of the key if it exists, otherwise it returns an empty string
-		}
+		}, nil
 	}
 
 	if command == "HSET" {
@@ -128,7 +133,7 @@ func handleCommand(value Value) Value {
 			return Value{
 				typ: '-',
 				str: "ERR wrong number of argument for 'HSET' command",
-			}
+			}, nil
 		}
 		key := value.array[1].str   // outer map like the index of the hash it has a map in itself too it is a string mapped to a map of string to string  and field andd val are the key and value of the stuff inside the map
 		field := value.array[2].str // inner map field
@@ -143,7 +148,7 @@ func handleCommand(value Value) Value {
 		return Value{
 			typ: '+',
 			str: "OK", // hset acceptance of values
-		}
+		}, nil
 
 	}
 
@@ -152,7 +157,7 @@ func handleCommand(value Value) Value {
 			return Value{
 				typ: '-',
 				str: "ERR wrong number of argument for 'HGET' command",
-			}
+			}, nil
 		}
 		key := value.array[1].str
 		field := value.array[2].str
@@ -163,12 +168,12 @@ func handleCommand(value Value) Value {
 			return Value{
 				typ: '$',
 				str: "",
-			}
+			}, nil
 		}
 		return Value{
 			typ: '$',
 			str: val,
-		}
+		}, nil
 	}
 
 	if command == "HGETALL" {
@@ -176,7 +181,7 @@ func handleCommand(value Value) Value {
 			return Value{
 				typ: '-',
 				str: "ERR wrong number of argument for 'HGETALL' command",
-			}
+			}, nil
 		}
 		key := value.array[1].str
 		hashMu.RLock()
@@ -198,7 +203,7 @@ func handleCommand(value Value) Value {
 		return Value{
 			typ:   '*',
 			array: response,
-		}
+		}, nil
 	}
 
 	if command == "HDEL" {
@@ -206,7 +211,7 @@ func handleCommand(value Value) Value {
 			return Value{
 				typ: '-',
 				str: "ERR wrong number of argument for 'HDEL' command",
-			}
+			}, nil
 		}
 		key := value.array[1].str
 		field := value.array[2].str
@@ -217,14 +222,14 @@ func handleCommand(value Value) Value {
 			return Value{
 				typ: ':',
 				num: 0,
-			}
+			}, nil
 		}
 		delete(hash[key], field)
 		hashMu.Unlock()
 		return Value{
 			typ: ':',
 			num: 1,
-		}
+		}, nil
 	}
 
 	if command == "FLUSHDB" { // we are eventually making new maps for both of the maps
@@ -242,10 +247,10 @@ func handleCommand(value Value) Value {
 		return Value{
 			typ: '+',
 			str: "OK",
-		} // this only clears the RAM not the actual aof file that PERSISTS data.
+		}, nil // this only clears the RAM not the actual aof file that PERSISTS data.
 	}
 
-	return Value{}
+	return Value{}, nil
 }
 
 func isWritableCommand(value Value) bool { /// aof wrotye without check if its valid or not soo we fixed tht
@@ -257,7 +262,7 @@ func isWritableCommand(value Value) bool { /// aof wrotye without check if its v
 
 	switch command {
 	case "SET":
-		return len(value.array) == 3
+		return len(value.array) == 3 || len(value.array) == 5
 	case "HSET":
 		return len(value.array) == 4
 	case "HDEL":
@@ -265,4 +270,28 @@ func isWritableCommand(value Value) bool { /// aof wrotye without check if its v
 	default:
 		return false
 	}
+}
+
+// a unified function to check expirartion that will be further used for aof too
+
+func calculateExpiration(seconds int) time.Time {
+	return time.Now().Add(time.Duration(seconds) * time.Second)
+}
+
+func commandForAOF(value Value, expiry *time.Time) Value {
+	if expiry == nil {
+		return value
+	}
+	timestamp := strconv.FormatInt(expiry.Unix(), 10)
+	aofCommand := Value{
+		typ: '*', // custom value with ex xchanged to exat rather than the original one
+		array: []Value{
+			{typ: '$', str: "SET"},
+			value.array[1], // raw taking 1 and 2 from the original value
+			value.array[2],
+			{typ: '$', str: "EXAT"},    // ex changed to exat will be used for aof persistance and absolute time stamp when it wil be expired
+			{typ: '$', str: timestamp}, // timestamp which is chasnged to unix expiry time by strconv
+		},
+	}
+	return aofCommand
 }
