@@ -235,6 +235,10 @@ func handleCommand(value Value) Value {
 		hashMu.Lock()
 		hash = make(map[string]map[string]string) // for hash commands
 		hashMu.Unlock()
+
+		expirationMu.Lock()
+		expiration = make(map[string]time.Time) // for expiration commands
+		expirationMu.Unlock()
 		return Value{
 			typ: '+',
 			str: "OK",
