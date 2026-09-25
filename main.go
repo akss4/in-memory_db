@@ -89,13 +89,22 @@ func startServer(addr string, aofPath string) (net.Listener, *Aof, error) {
 		fmt.Println("Error creating AOF:", err)
 		return nil, nil, err
 	}
-	err = aof.Read(func(value Value) { // read the AOF file and replay the commands to restore the state of the database
+	//test
+	start := time.Now()
+
+	err = aof.Read(func(value Value) {
 		handleCommand(value)
 	})
 	if err != nil {
 		fmt.Println("Error reading AOF:", err)
 		return nil, nil, err
 	}
+
+	fmt.Println("AOF recovery completed in:", time.Since(start))
+	//test
+	//err = aof.Read(func(value Value) { // read the AOF file and replay the commands to restore the state of the database
+	//	handleCommand(value)
+	//})
 
 	return listener, aof, nil // newaof is already a pointer
 }
