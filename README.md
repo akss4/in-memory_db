@@ -2,7 +2,7 @@
 
 A Redis-like in-memory database server built from scratch in Go.
 
-The goal of this project is to understand how a networked database works internally — from TCP connections and raw bytes, through RESP parsing and command execution, to concurrency, persistence, testing, and cloud deployment.
+The goal of this project is to understand how a networked database works internally — from TCP connections and raw bytes, through RESP parsing and command execution, to concurrency, persistence, key expiration, testing, performance benchmarking, and cloud deployment.
 
 ## Features
 
@@ -17,6 +17,9 @@ The goal of this project is to understand how a networked database works interna
 - AOF (Append-Only File) persistence
 - Startup recovery from AOF
 - Periodic AOF synchronization
+- Key expiration with TTL
+- Background expiration cleanup
+- Persistent TTL recovery across restarts
 - Graceful shutdown
 - Docker deployment
 - Persistent Docker volume
@@ -24,6 +27,8 @@ The goal of this project is to understand how a networked database works interna
 - Automated tests
 - Go race detector
 - GitHub Actions CI
+- Performance benchmarking
+- AOF recovery benchmarking
 
 ## Supported Commands
 
@@ -32,6 +37,7 @@ The goal of this project is to understand how a networked database works interna
 ```text
 PING
 SET key value
+SET key value EX seconds
 GET key
 ```
 
@@ -115,6 +121,8 @@ The project is tested with Go's race detector:
 go test -race ./...
 ```
 
+Expiration metadata is protected separately, with a consistent lock ordering used when an operation needs to access both stored values and expiration state.
+
 ## Persistence
 
 The database uses an Append-Only File (AOF) for persistence.
@@ -125,7 +133,18 @@ Writable commands are appended to the AOF:
 SET
 HSET
 HDEL
+FLUSHDB
 ```
+
+For expiring `SET` commands, the original relative TTL is converted into an absolute expiration timestamp before being persisted.
+
+Internally, the AOF represents this as:
+
+```text
+SET key value EXAT timestamp
+```
+
+`EXAT` is an internal AOF representation and is not exposed as a public client command.
 
 When the server starts, the AOF is replayed through the command handler to reconstruct the in-memory state.
 
@@ -206,6 +225,8 @@ Data recovered
 Remote read
 ```
 
+The same persistence mechanism also preserves the original expiration deadline for keys created with `SET ... EX`.
+
 ## Running Locally
 
 ### Requirements
@@ -239,6 +260,15 @@ PING
 SET name akash
 GET name
 ```
+
+For TTL:
+
+```text
+SET name akash EX 30
+GET name
+```
+
+The key will expire after the configured TTL.
 
 ## Docker
 
@@ -345,6 +375,21 @@ HGETALL user
 → age / 21
 ```
 
+TTL was also verified against the deployed server:
+
+```text
+SET session active EX 30
+→ OK
+
+GET session
+→ "active"
+
+...after expiration...
+
+GET session
+→ nil
+```
+
 > The public endpoint may change when the tunnel is recreated. Use the currently assigned Portwarp endpoint.
 
 ### Public Deployment Flow
@@ -408,6 +453,8 @@ Run with the race detector:
 go test -race ./...
 ```
 
+The current test suite contains **27 automated tests**.
+
 Tests cover:
 
 - RESP parsing
@@ -416,7 +463,18 @@ Tests cover:
 - Fragmented TCP commands
 - Multiple simultaneous clients
 - Command execution
-- Persistence behavior
+- String operations
+- Hash operations
+- TTL and expiration behavior
+- AOF persistence
+- AOF recovery
+- Database recovery
+
+The test suite currently passes successfully with:
+
+```bash
+go test ./... -count=1 -v
+```
 
 ## CI
 
@@ -441,13 +499,15 @@ The server handles both complete and fragmented RESP messages while preserving u
 
 Multiple clients can access the same in-memory data simultaneously.
 
-Separate read/write locks protect the string and hash stores.
+Separate read/write locks protect the string and hash stores, while expiration state has its own synchronization.
 
 ### Persistence
 
 The in-memory state cannot survive a process restart by itself.
 
 A custom AOF layer was introduced so commands can be replayed when the server starts.
+
+The AOF also preserves absolute expiration timestamps so TTL state survives a restart.
 
 ### Cloud Networking
 
@@ -456,6 +516,66 @@ The selected VM platform did not directly expose a raw public TCP port for the d
 Rather than changing the database protocol or architecture, a TCP tunneling layer was added externally.
 
 This preserved the server's native TCP/RESP interface on port `6379`.
+
+### Key Expiration
+
+TTL requires more than simply checking a timestamp during `GET`.
+
+The server maintains expiration metadata separately and runs a background cleanup loop so expired keys are removed even when they are never accessed.
+
+When an expiration is replaced, the cleanup process verifies that the expiration timestamp it discovered is still current before deleting the key.
+
+## Benchmarks
+
+Benchmarks were performed directly on the deployed VM rather than through the public Portwarp endpoint.
+
+### Benchmark Environment
+
+```text
+OS:       Debian 12
+CPU:      1 vCPU
+RAM:      1 GB
+Storage:  10 GB
+Runtime:  Docker
+Server:   in-memory-db:latest
+```
+
+### Throughput
+
+The following benchmark used `redis-benchmark` with 100,000 requests per command and 50 concurrent clients.
+
+Results below are averages across three complete runs:
+
+| Command | Throughput |
+|---------|------------|
+| SET     | ~6.3k ops/sec |
+| GET     | ~7.2k ops/sec |
+
+Average p99 latency across the three runs:
+
+| Command | p99 latency |
+|---------|-------------|
+| SET     | ~29.3 ms |
+| GET     | ~15.3 ms |
+
+The measurements were taken against `127.0.0.1:6379` on the VM to avoid including Portwarp network latency.
+
+The results are environment-specific and are intended as a baseline for future performance improvements.
+
+### AOF Recovery
+
+A controlled benchmark generated a 1,000,000-command AOF and then restarted the server.
+
+Measured recovery time:
+
+```text
+1,000,000-command AOF
+        │
+        ▼
+~1.46 seconds
+```
+
+This measures the time required to read, parse, and replay the AOF during startup on the same 1 vCPU / 1 GB VM.
 
 ## Project Status
 
@@ -471,6 +591,9 @@ This preserved the server's native TCP/RESP interface on port `6379`.
 - [x] AOF recovery
 - [x] Periodic synchronization
 - [x] Graceful shutdown
+- [x] TTL / key expiration
+- [x] Background expiration cleanup
+- [x] Persistent TTL recovery
 - [x] Unit/integration testing
 - [x] Race testing
 - [x] GitHub Actions CI
@@ -480,18 +603,23 @@ This preserved the server's native TCP/RESP interface on port `6379`.
 - [x] Public TCP access
 - [x] Remote database testing
 - [x] Persistence verification after container restart
+- [x] Performance benchmarking
+- [x] AOF recovery benchmarking
 
 ## Possible Future Extensions
 
-- TTL / key expiration
+- AOF rewrite / compaction
 - More Redis commands
 - Better command dispatch architecture
 - Improved error responses
 - More extensive AOF crash-recovery tests
-- Benchmarks
 - Authentication
 - More RESP features
 - Performance improvements
+- More extensive load testing
+- Replication
+- Configuration system
+- Observability and metrics
 
 ## Learning Goals
 
@@ -504,10 +632,13 @@ This project is being built to understand:
 - Protocol parsing
 - Command execution
 - In-memory data structures
+- Key expiration and TTL
 - File persistence
+- AOF recovery
 - Concurrency
 - Synchronization
 - Testing
+- Performance benchmarking
 - Docker
 - Cloud deployment
 - Systems programming
