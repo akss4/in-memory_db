@@ -339,10 +339,10 @@ This preserved the server's native TCP/RESP interface on port `6379`.
 
 ### Connecting to the Public Database
 
-The active public endpoint is provided by the Portwarp tunnel.
+The active public endpoint is provided by the Portwarp tunnel. // this changes everytimeee(portwarp gets expired)
 
 ```bash
-redis-cli -h elmbv279.free.pwrp.cc -p 12173
+redis-cli -h elmbv279.free.tryportwarp.cc -p 12173
 ```
 
 Example:
